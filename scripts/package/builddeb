@@ -26,8 +26,6 @@ if_enabled_echo() {
 
 create_package() {
 	local pname="$1" pdir="$2"
-	local dpkg_deb_opts
-
 	mkdir -m 755 -p "$pdir/DEBIAN"
 	mkdir -p "$pdir/usr/share/doc/$pname"
 	cp debian/copyright "$pdir/usr/share/doc/$pname/"
@@ -37,11 +35,7 @@ create_package() {
 		| xargs -r0 md5sum > DEBIAN/md5sums"
 
 	# Fix ownership and permissions
-	if [ "$DEB_RULES_REQUIRES_ROOT" = "no" ]; then
-		dpkg_deb_opts="--root-owner-group"
-	else
-		chown -R root:root "$pdir"
-	fi
+	chown -R root:root "$pdir"
 	chmod -R go-w "$pdir"
 	# in case we are in a restrictive umask environment like 0077
 	chmod -R a+rX "$pdir"
@@ -99,9 +93,9 @@ create_package() {
 	cd /usr/src/linux-headers-$version
 	echo "Compiling headers - please wait ..."
 	find -type f -exec touch {} +
-	make -s scripts >/dev/null
-	make -s M=scripts/mod/ >/dev/null
-	exit 0
+	make -s scripts || exit 1
+	make -s M=scripts/mod/ || exit 1
+	#exit 0
 	EOF
 
 	cat >> $pdir/DEBIAN/prerm <<-EOF
@@ -111,10 +105,6 @@ create_package() {
 
 	chmod 775 $pdir/DEBIAN/postinst ; chmod 775 $pdir/DEBIAN/prerm
 	fi
-
-
-	# in case we build in a setuid/setgid directory
-	chmod -R ug-s "$pdir"
 
 	# Create the package
 	dpkg-gencontrol -p$pname -P"$pdir"
@@ -195,13 +185,9 @@ fi
 # path instead
 case $ARCH in
 aarch64|arm64)
-	image_name=Image
-	installed_image_path="boot/vmlinuz-$version"
-	;;
-arm*)
-	image_name=zImage
-	installed_image_path="boot/vmlinuz-$version"
-	;;
+   image_name=Image
+   installed_image_path="boot/vmlinuz-$version"
+   ;;
 um)
 	installed_image_path="usr/bin/linux-$version"
 	;;
@@ -283,6 +269,7 @@ if [ "$ARCH" != "um" ]; then
 	host_arch=$(dpkg-architecture -a$(cat debian/arch) -qDEB_HOST_MULTIARCH)
 	mkdir $libc_headers_dir/usr/include/$host_arch
 	mv $libc_headers_dir/usr/include/asm $libc_headers_dir/usr/include/$host_arch/
+	create_package "$dtb_packagename" "$dtb_dir" "dtb"
 fi
 
 # Install the maintainer scripts
@@ -347,9 +334,6 @@ check_and_unmount (){
 			break
 		fi
 	done
-
-	deploy_libc_headers debian/linux-libc-dev
-	create_package linux-libc-dev debian/linux-libc-dev
 	bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
 	if [ "\$bootfstype" = "vfat" ]; then
 		# we have to keep it mounted! umount /boot
@@ -359,6 +343,8 @@ check_and_unmount (){
 mountpoint -q /boot && check_and_unmount
 EOT
 echo "exit 0" >> $tmpdir/DEBIAN/preinst
+
+create_package "$packagename" "$tmpdir"
 
 # Build kernel header package
 (cd $srctree; find . -name Makefile\* -o -name Kconfig\* -o -name \*.pl) > "$objtree/debian/hdrsrcfiles"
@@ -375,21 +361,18 @@ if is_enabled CONFIG_GCC_PLUGINS; then
 fi
 destdir=$kernel_headers_dir/usr/src/linux-headers-$version
 mkdir -p "$destdir"
-(cd $destdir; patch -p1 < /tmp/headers-debian-byteshift.patch)
+
 (cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
 (cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
 (cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
 ln -sf "/usr/src/linux-headers-$version" "$kernel_headers_dir/lib/modules/$version/build"
 rm -f "$objtree/debian/hdrsrcfiles" "$objtree/debian/hdrobjfiles"
 
-(cd $destdir; make M=scripts clean)
+(cd $destdir; export sub_make_done=0; make M=scripts clean;)
 
 if [ "$ARCH" != "um" ]; then
 	create_package "$kernel_headers_packagename" "$kernel_headers_dir" "headers"
-	create_package "$dtb_packagename" "$dtb_dir" "dtb"
 fi
-
-create_package "$packagename" "$tmpdir"
 
 if [ -n "$BUILD_DEBUG" ] ; then
 	# Build debug package
