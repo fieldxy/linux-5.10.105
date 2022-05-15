@@ -362,6 +362,8 @@ fi
 destdir=$kernel_headers_dir/usr/src/linux-headers-$version
 mkdir -p "$destdir"
 
+wget https://raw.githubusercontent.com/armbian/build/master/patch/misc/headers-debian-byteshift.patch -P /tmp/
+(cd $destdir; patch -p1 < /tmp/headers-debian-byteshift.patch)
 (cd $srctree; tar -c -f - -T -) < "$objtree/debian/hdrsrcfiles" | (cd $destdir; tar -xf -)
 (cd $objtree; tar -c -f - -T -) < "$objtree/debian/hdrobjfiles" | (cd $destdir; tar -xf -)
 (cd $objtree; cp $KCONFIG_CONFIG $destdir/.config) # copy .config manually to be where it's expected to be
